@@ -4,6 +4,7 @@
  */
 
 import React from 'react';
+import { AuthProvider } from './context/AuthContext';
 import { StageProvider, useStage } from './context/StageContext';
 import { Header } from './components/Header';
 import { GearPalette } from './components/GearLibrary/GearPalette';
@@ -38,11 +39,13 @@ const MainView: React.FC = () => {
 
 export default function App() {
   return (
-    <StageProvider>
-      <div className="app-shell h-screen w-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden font-sans">
-        <Header />
-        <MainView />
-      </div>
-    </StageProvider>
+    <AuthProvider>
+      <StageProvider>
+        <div className="app-shell h-screen w-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden font-sans">
+          <Header />
+          <MainView />
+        </div>
+      </StageProvider>
+    </AuthProvider>
   );
 }

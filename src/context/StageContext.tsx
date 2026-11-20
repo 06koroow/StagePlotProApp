@@ -16,6 +16,12 @@ import {
   ProductionContact,
 } from '../types/stage';
 import { BAND_TEMPLATES, GEAR_DEFINITIONS, DEFAULT_SIGNAL_GROUPS } from '../data/gearLibrary';
+import { useAuth } from './AuthContext';
+import {
+  fetchCustomGearDefinitions,
+  upsertCustomGearDefinition,
+  deleteCloudCustomGearDefinition,
+} from '../services/supabaseProjects';
 
 const STORAGE_KEY = 'stagecraft_active_project_v2';
 const CUSTOM_GEAR_STORAGE_KEY = 'stagecraft_custom_gear_v1';
@@ -56,6 +62,8 @@ interface StageContextType {
   updateProject: (partial: Partial<StageProject>) => void;
   updateStageDimensions: (dims: StageDimensions) => void;
   loadTemplate: (templateKey: string) => void;
+  loadProjectFromCloud: (cloudProject: StageProject) => void;
+  replaceProjectSnapshot: (nextProject: StageProject) => void;
   resetToBlank: (widthFeet?: number, depthFeet?: number) => void;
   importProjectJSON: (jsonStr: string) => boolean;
   exportProjectJSON: () => string;
@@ -187,6 +195,8 @@ function normalizeProject(raw: any): StageProject {
 }
 
 export const StageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user, isConfigured: isCloudConfigured } = useAuth();
+
   // Load custom gear library from localStorage
   const [customGearDefinitions, setCustomGearDefinitions] = useState<Record<string, GearDefinition>>(() => {
     try {
@@ -207,6 +217,26 @@ export const StageProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     () => ({ ...GEAR_DEFINITIONS, ...customGearDefinitions }),
     [customGearDefinitions]
   );
+
+  // Pull user's cloud custom gear definitions when signed in
+  useEffect(() => {
+    if (!user?.id || !isCloudConfigured) return;
+    let active = true;
+    fetchCustomGearDefinitions(user.id)
+      .then((cloudDefs) => {
+        if (!active || Object.keys(cloudDefs).length === 0) return;
+        setCustomGearDefinitions((prev) => ({
+          ...prev,
+          ...cloudDefs,
+        }));
+      })
+      .catch(() => {
+        // Ignore network/table errors silently so local gear library stays responsive
+      });
+    return () => {
+      active = false;
+    };
+  }, [user?.id, isCloudConfigured]);
 
   // Save custom gear definitions to localStorage
   useEffect(() => {
@@ -396,21 +426,53 @@ export const StageProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     [setProjectState]
   );
 
-  // Custom Gear Library Actions
-  const saveCustomGearDefinition = useCallback((def: GearDefinition) => {
-    setCustomGearDefinitions((prev) => ({
-      ...prev,
-      [def.type]: { ...def, isCustom: true },
-    }));
+  const loadProjectFromCloud = useCallback((cloudProject: StageProject) => {
+    const normalized = normalizeProject(cloudProject);
+    historyRef.current = [normalized];
+    historyIndexRef.current = 0;
+    isUndoRedoRef.current = false;
+    setProject(normalized);
+    setSelectedItemId(null);
   }, []);
 
-  const deleteCustomGearDefinition = useCallback((typeKey: string) => {
-    setCustomGearDefinitions((prev) => {
-      const next = { ...prev };
-      delete next[typeKey];
-      return next;
-    });
+  const replaceProjectSnapshot = useCallback((nextProject: StageProject) => {
+    const normalized = normalizeProject(nextProject);
+    historyRef.current[historyIndexRef.current] = normalized;
+    setProject(normalized);
   }, []);
+
+  // Custom Gear Library Actions
+  const saveCustomGearDefinition = useCallback(
+    (def: GearDefinition) => {
+      const normalizedDef: GearDefinition = { ...def, isCustom: true };
+      setCustomGearDefinitions((prev) => ({
+        ...prev,
+        [def.type]: normalizedDef,
+      }));
+      if (user?.id && isCloudConfigured) {
+        void upsertCustomGearDefinition(user.id, normalizedDef).catch(() => {
+          // Local copy already saved
+        });
+      }
+    },
+    [user?.id, isCloudConfigured]
+  );
+
+  const deleteCustomGearDefinition = useCallback(
+    (typeKey: string) => {
+      setCustomGearDefinitions((prev) => {
+        const next = { ...prev };
+        delete next[typeKey];
+        return next;
+      });
+      if (user?.id && isCloudConfigured) {
+        void deleteCloudCustomGearDefinition(user.id, typeKey).catch(() => {
+          // Local copy already deleted
+        });
+      }
+    },
+    [user?.id, isCloudConfigured]
+  );
 
   // Signal Group / Split Management
   const addSignalGroup = useCallback(
@@ -1219,6 +1281,8 @@ export const StageProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updateProject,
         updateStageDimensions,
         loadTemplate,
+        loadProjectFromCloud,
+        replaceProjectSnapshot,
         resetToBlank,
         importProjectJSON,
         exportProjectJSON,

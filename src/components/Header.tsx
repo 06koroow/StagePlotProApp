@@ -3,16 +3,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useStage } from '../context/StageContext';
+import { useAuth } from '../context/AuthContext';
 import { exportRiderToPDF, PdfExportOptions } from '../utils/pdfExporter';
 import { PdfExportModal } from './RiderExport/PdfExportModal';
+import { AuthModal } from './Auth/AuthModal';
+import { ProjectsModal } from './Projects/ProjectsModal';
+import { saveCloudProject } from '../services/supabaseProjects';
 import {
   Undo2,
   Redo2,
   Download,
   FolderOpen,
   Loader2,
+  CloudUpload,
+  Check,
+  User,
 } from 'lucide-react';
 
 export const Header: React.FC = () => {
@@ -25,16 +32,28 @@ export const Header: React.FC = () => {
     canRedo,
     project,
     updateProject,
-    loadTemplate,
-    resetToBlank,
-    exportProjectJSON,
-    importProjectJSON,
+    replaceProjectSnapshot,
   } = useStage();
 
+  const { user, profile, isConfigured } = useAuth();
+
   const [showProjectModal, setShowProjectModal] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
   const [showEditInfoModal, setShowEditInfoModal] = useState(false);
   const [showPdfExportModal, setShowPdfExportModal] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [quickSaveState, setQuickSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>(
+    'idle'
+  );
+  const saveTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current);
+      }
+    };
+  }, []);
 
   const handleConfirmExportPDF = async (options: PdfExportOptions) => {
     setIsExporting(true);
@@ -49,15 +68,25 @@ export const Header: React.FC = () => {
     }
   };
 
-  const handleDownloadJSON = () => {
-    const jsonStr = exportProjectJSON();
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${(project.artistName || 'StagePlot').replace(/\s+/g, '_')}.stagecraft.json`;
-    link.click();
-    URL.revokeObjectURL(url);
+  const handleQuickCloudSave = async () => {
+    if (!user?.id || !isConfigured) {
+      setShowAuthModal(true);
+      return;
+    }
+
+    setQuickSaveState('saving');
+    try {
+      const saved = await saveCloudProject(user.id, project);
+      replaceProjectSnapshot(saved);
+      setQuickSaveState('saved');
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = window.setTimeout(() => setQuickSaveState('idle'), 2200);
+    } catch {
+      setQuickSaveState('error');
+      setShowProjectModal(true);
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = window.setTimeout(() => setQuickSaveState('idle'), 2500);
+    }
   };
 
   return (
@@ -189,14 +218,62 @@ export const Header: React.FC = () => {
             </button>
           </div>
 
+          {/* Quick Cloud Save (when signed in) */}
+          {user && isConfigured && (
+            <button
+              type="button"
+              onClick={handleQuickCloudSave}
+              disabled={quickSaveState === 'saving'}
+              className={`px-2.5 py-1.5 rounded border text-xs font-medium transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+                quickSaveState === 'saved'
+                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                  : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200'
+              }`}
+              title="Save current stage plot to Supabase"
+            >
+              {quickSaveState === 'saving' ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-400" />
+              ) : quickSaveState === 'saved' ? (
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+              ) : (
+                <CloudUpload className="w-3.5 h-3.5 text-sky-400" />
+              )}
+              <span className="hidden xl:inline">
+                {quickSaveState === 'saving'
+                  ? 'Saving...'
+                  : quickSaveState === 'saved'
+                  ? 'Saved'
+                  : 'Save'}
+              </span>
+            </button>
+          )}
+
           {/* Project Management Drawer */}
           <button
             type="button"
             onClick={() => setShowProjectModal(true)}
-            className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white"
-            title="Projects & Templates"
+            className="px-2.5 py-1.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white text-xs font-medium flex items-center gap-1.5"
+            title="Show Projects & Templates"
           >
             <FolderOpen className="w-3.5 h-3.5" />
+            <span className="hidden lg:inline">Projects</span>
+          </button>
+
+          {/* Account / Sign In Button */}
+          <button
+            type="button"
+            onClick={() => setShowAuthModal(true)}
+            className={`px-2.5 py-1.5 rounded border text-xs font-medium transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+              user
+                ? 'bg-slate-800 hover:bg-slate-700 border-sky-500/40 text-sky-200'
+                : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300 hover:text-white'
+            }`}
+            title={user ? `Signed in as @${profile?.username || 'user'}` : 'Sign in to sync projects'}
+          >
+            <User className={`w-3.5 h-3.5 ${user ? 'text-sky-400' : 'text-slate-400'}`} />
+            <span className="hidden md:inline max-w-[100px] truncate">
+              {user ? `@${profile?.username || 'account'}` : 'Sign In'}
+            </span>
           </button>
 
           {/* Primary Action Button */}
@@ -216,130 +293,16 @@ export const Header: React.FC = () => {
         </div>
       </header>
 
-      {/* Project & Template Modal */}
+      {/* Show Projects & Templates Modal */}
       {showProjectModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-lg max-w-md w-full p-5 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h3 className="font-bold text-slate-100 text-sm flex items-center gap-2">
-                <FolderOpen className="w-4 h-4 text-sky-400" />
-                <span>Show Projects & Templates</span>
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowProjectModal(false)}
-                className="text-slate-400 hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-2">
-                  Load Production Template
-                </label>
-                <div className="space-y-1.5 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      loadTemplate('band_4piece');
-                      setShowProjectModal(false);
-                    }}
-                    className="w-full text-left p-2.5 rounded bg-slate-800/80 hover:bg-slate-800 border border-sky-500/40 text-slate-200 flex items-center justify-between"
-                  >
-                    <div>
-                      <div className="font-semibold text-sky-300">4-Piece Touring Band</div>
-                      <div className="text-[11px] text-slate-400">
-                        5-pc drums on riser, Guitar combo, Bass rig, 4 wedges, 16 inputs
-                      </div>
-                    </div>
-                    <span className="font-mono text-sky-400 text-xs font-bold">16 Ch</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      loadTemplate('acoustic_ensemble');
-                      setShowProjectModal(false);
-                    }}
-                    className="w-full text-left p-2.5 rounded bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-slate-200 flex items-center justify-between"
-                  >
-                    <div>
-                      <div className="font-semibold text-slate-100">5-Piece Acoustic Ensemble</div>
-                      <div className="text-[11px] text-slate-400">
-                        Percussion, Keys, Acoustic Guitars, Bass, Teleprompter, 5 wedges
-                      </div>
-                    </div>
-                    <span className="font-mono text-sky-400 text-xs">16 Ch</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      loadTemplate('festival_7piece');
-                      setShowProjectModal(false);
-                    }}
-                    className="w-full text-left p-2.5 rounded bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-slate-200 flex items-center justify-between"
-                  >
-                    <div>
-                      <div className="font-semibold text-slate-100">7-Piece Full Production w/ Horns & IEMs</div>
-                      <div className="text-[11px] text-slate-400">
-                        Dual keys, Horn section, Playback tracks, Digital stagebox, IEM RF
-                      </div>
-                    </div>
-                    <span className="font-mono text-sky-400 text-xs">24 Ch</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    resetToBlank(28, 18);
-                    setShowProjectModal(false);
-                  }}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded text-xs text-slate-300"
-                >
-                  Start Blank Show
-                </button>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleDownloadJSON}
-                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded text-xs text-slate-300"
-                  >
-                    Export JSON
-                  </button>
-
-                  <label className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs font-medium cursor-pointer">
-                    Import JSON
-                    <input
-                      type="file"
-                      accept=".json"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        const reader = new FileReader();
-                        reader.onload = (evt) => {
-                          const content = evt.target?.result as string;
-                          if (content && importProjectJSON(content)) {
-                            setShowProjectModal(false);
-                          }
-                        };
-                        reader.readAsText(file);
-                      }}
-                    />
-                  </label>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <ProjectsModal
+          onClose={() => setShowProjectModal(false)}
+          onOpenAuth={() => setShowAuthModal(true)}
+        />
       )}
+
+      {/* Supabase Auth / Account Modal */}
+      {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
 
       {/* Edit Project Info Modal */}
       {showEditInfoModal && (
