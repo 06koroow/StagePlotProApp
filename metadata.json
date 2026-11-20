@@ -1,0 +1,6 @@
+{
+  "name": "StageCraft Pro — Stage Plot & Channel List Builder",
+  "description": "Professional 2D stage plot designer and master audio input channel list generator for sound engineers, tour crews, and live venues.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
